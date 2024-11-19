@@ -10,35 +10,15 @@ from asyncio import Semaphore
 from concurrent.futures import ThreadPoolExecutor
 import aiofiles
 import os
+from prompt_templates import PromptTemplates
 
 # Global Configuration
 OPENAI_MODEL = "gpt-4o-mini"  # Change this to use a different model
 PROJECT_DIR = r"C:\Users\wkraf\Documents\Coding\Event_Trader\versions\v7_concurrent_batches"  # Change this to your project directory
 OUTPUT_FILE = r"C:\Users\wkraf\Documents\Coding\Directory_Summarizer\Versions\V3-simple\Sample_Outputs\code_analysis_report.md"  # Change this to your desired output file
-# ANALYSIS_PROMPT = """
-# For each file:
-# 1. List all imports and external dependencies
-# 2. Summarize the main purpose of the file
-# 3. List key functions and classes
-# 4. Identify any potential issues or improvements
-# """
-
-# Make a prompt specifically for getting all the imports required for a requirements.txt file
-ANALYSIS_PROMPT = """
-For each file:
-1. List all imports and external dependencies
-"""
 
 # Add these after the existing global configurations
 PERFORM_FINAL_ANALYSIS = True  # Enable/disable final GPT analysis
-FINAL_ANALYSIS_PROMPT = """
-Analyze all the code findings and provide:
-1. Overall architecture overview
-2. Common patterns and practices
-3. Key improvement recommendations
-4. Technical debt assessment
-5. Project health summary
-"""
 
 # Configure logging with colors
 handler = colorlog.StreamHandler()
@@ -155,24 +135,23 @@ class SimpleCodeAnalyzer:
     def __init__(
         self,
         file_types: str,
-        analysis_prompt: str,
+        template_name: str = 'analysis',
+        template_path: Optional[str] = None,
         api_key: Optional[str] = None,
         max_concurrent: int = 3,
-        model: str = OPENAI_MODEL,  # Use global model config
-        perform_final_analysis: bool = PERFORM_FINAL_ANALYSIS,
-        final_analysis_prompt: str = FINAL_ANALYSIS_PROMPT
+        model: str = OPENAI_MODEL,
+        perform_final_analysis: bool = PERFORM_FINAL_ANALYSIS
     ):
-        # Use environment variable if api_key not provided
         self.client = OpenAI(api_key=api_key or os.getenv('OPENAI_API_KEY'))
         self.model = model
-        # Now passing the OpenAI client and model to process file types
         self.file_extensions = FileExtensions.from_string(file_types, client=self.client, model=self.model)
-        self.analysis_prompt = analysis_prompt
+        self.templates = PromptTemplates(template_path)
+        self.analysis_prompt = self.templates.get_template(template_name)
+        self.final_analysis_prompt = self.templates.get_template('final_analysis')
         self.max_concurrent = max_concurrent
         self.rate_limiter = RateLimiter()
         self.executor = ThreadPoolExecutor(max_workers=max_concurrent)
         self.perform_final_analysis = perform_final_analysis
-        self.final_analysis_prompt = final_analysis_prompt
 
     async def read_file_content_async(self, file_path: Path) -> Optional[FileContent]:
         """Asynchronously read file content with multiple encoding attempts"""
@@ -347,7 +326,8 @@ async def async_main():
     """Example usage"""
     analyzer = SimpleCodeAnalyzer(
         file_types="python and configuration files",
-        analysis_prompt=ANALYSIS_PROMPT,  # Use global analysis prompt
+        template_name="requirements",  # Use the requirements template
+        template_path="custom_templates.yaml"  # Optional: path to custom templates
     )
 
     try:

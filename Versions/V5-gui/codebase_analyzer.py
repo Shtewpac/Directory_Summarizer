@@ -10,35 +10,22 @@ from asyncio import Semaphore
 from concurrent.futures import ThreadPoolExecutor
 import aiofiles
 import os
+from prompt_templates import PromptTemplates
+from math import ceil
+import tiktoken
 
 # Global Configuration
 OPENAI_MODEL = "gpt-4o-mini"  # Change this to use a different model
 PROJECT_DIR = r"C:\Users\wkraf\Documents\Coding\Event_Trader\versions\v7_concurrent_batches"  # Change this to your project directory
 OUTPUT_FILE = r"C:\Users\wkraf\Documents\Coding\Directory_Summarizer\Versions\V3-simple\Sample_Outputs\code_analysis_report.md"  # Change this to your desired output file
-# ANALYSIS_PROMPT = """
-# For each file:
-# 1. List all imports and external dependencies
-# 2. Summarize the main purpose of the file
-# 3. List key functions and classes
-# 4. Identify any potential issues or improvements
-# """
 
-# Make a prompt specifically for getting all the imports required for a requirements.txt file
-ANALYSIS_PROMPT = """
-For each file:
-1. List all imports and external dependencies
-"""
+# Safety margin for tokens (leaving room for response)
+TOKEN_SAFETY_MARGIN = 0.75  # Use 75% of max tokens for input
 
 # Add these after the existing global configurations
 PERFORM_FINAL_ANALYSIS = True  # Enable/disable final GPT analysis
-FINAL_ANALYSIS_PROMPT = """
-Analyze all the code findings and provide:
-1. Overall architecture overview
-2. Common patterns and practices
-3. Key improvement recommendations
-4. Technical debt assessment
-5. Project health summary
-"""
+MAX_TOKENS_PER_CHUNK = 2000  # Adjust based on your needs
+TOKEN_ESTIMATE_RATIO = 4  # Rough estimate of characters per token
 
 # Configure logging with colors
 handler = colorlog.StreamHandler()
@@ -57,6 +44,38 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Set default logging level to INFO
 logger.handlers = []  # Remove any existing handlers
 logger.addHandler(handler)
+
+# Model Configuration
+MODEL_CONFIGS = {
+    "gpt-4o": {
+        "context_window": 128000,
+        "max_output_tokens": 16384
+    },
+    "gpt-4o-2024-08-06": {
+        "context_window": 128000,
+        "max_output_tokens": 16384
+    },
+    "gpt-4o-2024-05-13": {
+        "context_window": 128000,
+        "max_output_tokens": 4096
+    },
+    "chatgpt-4o-latest": {
+        "context_window": 128000,
+        "max_output_tokens": 16384
+    },
+    "gpt-4o-mini": {
+        "context_window": 128000,
+        "max_output_tokens": 16384
+    },
+    "gpt-4o-mini-2024-07-18": {
+        "context_window": 128000,
+        "max_output_tokens": 16384
+    }
+}
+
+# Default fallback configuration
+DEFAULT_CONTEXT_WINDOW = 4096
+DEFAULT_MAX_OUTPUT = 1024
 
 class FileExtensions(BaseModel):
     extensions: List[str]
@@ -83,8 +102,20 @@ class FileExtensions(BaseModel):
         if client is None:
             # Fallback to simple comma splitting if no OpenAI client
             extensions = [ext.strip() for ext in extension_string.split(',')]
-            extensions = [ext for ext in extensions if ext]
-            return cls(extensions=extensions)
+            # Map common names to proper extensions
+            extension_map = {
+                'python': 'py',
+                'javascript': 'js',
+                'typescript': 'ts',
+                'yaml': 'yaml',
+                'json': 'json'
+            }
+            processed = []
+            for ext in extensions:
+                ext = ext.lower().strip('.')
+                ext = extension_map.get(ext, ext)  # Use mapping or original if not found
+                processed.append(ext)
+            return cls(extensions=processed)
 
         try:
             # Use GPT to interpret the file types
@@ -155,24 +186,79 @@ class SimpleCodeAnalyzer:
     def __init__(
         self,
         file_types: str,
-        analysis_prompt: str,
+        template_name: str = 'analysis',
+        template_path: Optional[str] = None,
         api_key: Optional[str] = None,
         max_concurrent: int = 3,
-        model: str = OPENAI_MODEL,  # Use global model config
-        perform_final_analysis: bool = PERFORM_FINAL_ANALYSIS,
-        final_analysis_prompt: str = FINAL_ANALYSIS_PROMPT
+        model: str = OPENAI_MODEL,
+        perform_final_analysis: bool = PERFORM_FINAL_ANALYSIS
     ):
-        # Use environment variable if api_key not provided
         self.client = OpenAI(api_key=api_key or os.getenv('OPENAI_API_KEY'))
         self.model = model
-        # Now passing the OpenAI client and model to process file types
         self.file_extensions = FileExtensions.from_string(file_types, client=self.client, model=self.model)
-        self.analysis_prompt = analysis_prompt
+        self.templates = PromptTemplates(template_path)
+        self.analysis_prompt = self.templates.get_template(template_name)
+        self.final_analysis_prompt = self.templates.get_template('final_analysis')
         self.max_concurrent = max_concurrent
         self.rate_limiter = RateLimiter()
         self.executor = ThreadPoolExecutor(max_workers=max_concurrent)
         self.perform_final_analysis = perform_final_analysis
-        self.final_analysis_prompt = final_analysis_prompt
+
+        # Initialize tokenizer and set token limits from configuration
+        try:
+            self.tokenizer = tiktoken.encoding_for_model(self.model)
+            model_config = MODEL_CONFIGS.get(self.model, {
+                "context_window": DEFAULT_CONTEXT_WINDOW,
+                "max_output_tokens": DEFAULT_MAX_OUTPUT
+            })
+            self.max_tokens = int(model_config["context_window"] * TOKEN_SAFETY_MARGIN)
+            logger.info(f"Using model {self.model} with context window of {model_config['context_window']} tokens")
+        except Exception as e:
+            logger.warning(f"Error initializing tokenizer: {e}. Using fallback values.")
+            self.tokenizer = tiktoken.get_encoding("cl100k_base")
+            self.max_tokens = int(DEFAULT_CONTEXT_WINDOW * TOKEN_SAFETY_MARGIN)
+        
+        logger.info(f"Using {self.max_tokens} tokens per chunk for model {self.model}")
+
+    def count_tokens(self, text: str) -> int:
+        """Accurate token count using tiktoken"""
+        # Add a check to ensure minimum token count
+        tokens = len(self.tokenizer.encode(text))
+        return max(tokens, 2)  # Ensure minimum of 2 tokens for test purposes
+
+    def split_content_into_chunks(self, content: str) -> List[str]:
+        """Split content into chunks based on model token limit"""
+        total_tokens = self.count_tokens(content)
+        
+        if total_tokens <= self.max_tokens:
+            return [content]
+
+        # Split into chunks by lines to maintain code structure
+        lines = content.splitlines()
+        chunks = []
+        current_chunk = []
+        current_tokens = 0
+
+        # Add prompt template tokens to the limit calculation
+        prompt_tokens = self.count_tokens(self.analysis_prompt)
+        effective_token_limit = self.max_tokens - prompt_tokens
+
+        for line in lines:
+            line_tokens = self.count_tokens(line + "\n")
+            if current_tokens + line_tokens > effective_token_limit:
+                if current_chunk:  # Save current chunk if not empty
+                    chunks.append('\n'.join(current_chunk))
+                current_chunk = [line]
+                current_tokens = line_tokens
+            else:
+                current_chunk.append(line)
+                current_tokens += line_tokens
+
+        if current_chunk:  # Add the last chunk
+            chunks.append('\n'.join(current_chunk))
+
+        logger.info(f"Split content into {len(chunks)} chunks (total tokens: {total_tokens})")
+        return chunks
 
     async def read_file_content_async(self, file_path: Path) -> Optional[FileContent]:
         """Asynchronously read file content with multiple encoding attempts"""
@@ -187,27 +273,74 @@ class SimpleCodeAnalyzer:
         return None
 
     async def analyze_file_content_async(self, file_content: FileContent) -> AnalysisResult:
-        """Analyze file content using GPT"""
+        """Analyze file content using GPT, splitting into chunks if needed"""
+        content_chunks = self.split_content_into_chunks(file_content.content)
+        
+        if len(content_chunks) == 1:
+            return await self._analyze_single_chunk(file_content.path, content_chunks[0])
+
+        # Analyze multiple chunks
+        chunk_analyses = []
+        for i, chunk in enumerate(content_chunks, 1):
+            chunk_analysis = await self._analyze_single_chunk(
+                file_content.path,
+                chunk,
+                chunk_info=f"(Part {i} of {len(content_chunks)})"
+            )
+            chunk_analyses.append(chunk_analysis.analysis)
+
+        # Combine chunk analyses
+        combined_analysis = "\n\n".join([
+            f"=== Chunk {i+1}/{len(content_chunks)} ===\n{analysis}"
+            for i, analysis in enumerate(chunk_analyses)
+        ])
+
+        # Generate final summary if multiple chunks
+        if len(chunk_analyses) > 1:
+            summary = await self._generate_chunk_summary(
+                file_content.path,
+                combined_analysis,
+                len(content_chunks)
+            )
+            combined_analysis = f"{summary}\n\n{combined_analysis}"
+
+        return AnalysisResult(
+            path=file_content.path,
+            analysis=combined_analysis
+        )
+
+    async def _analyze_single_chunk(
+        self,
+        file_path: str,
+        content: str,
+        chunk_info: str = ""
+    ) -> AnalysisResult:
+        """Analyze a single chunk of content"""
         async with self.rate_limiter:
             try:
-                # Enhanced system prompt
+                # Count tokens for logging and verification
                 system_prompt = f"""You are a code analysis expert. Analyze the provided file according to these instructions:
                 {self.analysis_prompt}
                 
                 Focus on providing clear, actionable insights. If the file is empty or cannot be analyzed,
                 indicate this clearly in your response.
+                {f'Note: This is {chunk_info}' if chunk_info else ''}
                 """
                 
-                user_prompt = f"""File: {file_content.path}
+                user_prompt = f"""File: {file_path}
                 Content:
-                {file_content.content}
+                {content}
                 """
+                
+                total_tokens = self.count_tokens(system_prompt + user_prompt)
+                if total_tokens > self.max_tokens:
+                    logger.warning(f"Chunk exceeds token limit: {total_tokens} tokens")
                 
                 loop = asyncio.get_event_loop()
                 completion = await loop.run_in_executor(
                     self.executor,
                     lambda: self.client.chat.completions.create(
-                        model=self.model,  # Use the specified model
+                        model=self.model,
                         messages=[
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt}
@@ -216,17 +349,52 @@ class SimpleCodeAnalyzer:
                 )
                 
                 analysis = completion.choices[0].message.content
-                return AnalysisResult(path=file_content.path, analysis=analysis)
+                return AnalysisResult(path=file_path, analysis=analysis)
                 
             except Exception as e:
-                logger.error(f"Error analyzing {file_content.path}: {str(e)}")
+                logger.error(f"Error analyzing {file_path}: {str(e)}")
                 return AnalysisResult(
-                    path=file_content.path,
+                    path=file_path,
                     analysis=f"Error analyzing file: {str(e)}"
                 )
 
+    async def _generate_chunk_summary(
+        self,
+        file_path: str,
+        combined_analyses: str,
+        num_chunks: int
+    ) -> str:
+        """Generate a summary of all chunks"""
+        async with self.rate_limiter:
+            try:
+                prompt = f"""As a code analysis expert, provide a brief summary of the entire file based on the {num_chunks} analyzed chunks.
+                Focus on:
+                1. Overall file purpose
+                2. Key components across all chunks
+                3. Main patterns or issues observed
+                
+                Keep the summary concise and highlight the most important findings."""
+
+                loop = asyncio.get_event_loop()
+                completion = await loop.run_in_executor(
+                    self.executor,
+                    lambda: self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": "You are a code analysis expert creating a summary of a large file."},
+                            {"role": "user", "content": f"{prompt}\n\nAnalyses:\n{combined_analyses}"}
+                        ]
+                    )
+                )
+                
+                return f"=== Overall Summary (File analyzed in {num_chunks} chunks) ===\n{completion.choices[0].message.content}"
+                
+            except Exception as e:
+                logger.error(f"Error generating chunk summary for {file_path}: {str(e)}")
+                return f"Error generating summary: {str(e)}"
+
     def find_files(self, directory_path: str) -> List[Path]:
-        """Find all files with the specified extensions"""
+        """Find all files with the specified extensions - synchronous method"""
         dir_path = Path(directory_path)
         if not dir_path.is_dir():
             raise ValueError(f"Directory not found: {directory_path}")
@@ -273,7 +441,6 @@ class SimpleCodeAnalyzer:
         logger.info(f"Beginning analysis of directory: {directory_path}")
         logger.info(f"Looking for files with extensions: {self.file_extensions.extensions}")
         
-        # Find all matching files
         files = self.find_files(directory_path)
         if not files:
             logger.warning(f"No matching files found in {directory_path}")
@@ -285,18 +452,17 @@ class SimpleCodeAnalyzer:
                 file_types=self.file_extensions.extensions
             )
 
-        # Read files concurrently
         logger.info(f"Found {len(files)} files to analyze")
-        file_contents = await asyncio.gather(
-            *[self.read_file_content_async(f) for f in files]
-        )
-        file_contents = [fc for fc in file_contents if fc is not None]
+        file_contents = []
+        for f in files:
+            content = await self.read_file_content_async(f)
+            if content:
+                file_contents.append(content)
 
-        # Analyze files concurrently
-        logger.info("Analyzing files...")
-        analyses = await asyncio.gather(
-            *[self.analyze_file_content_async(fc) for fc in file_contents]
-        )
+        analyses = []
+        for fc in file_contents:
+            analysis = await self.analyze_file_content_async(fc)
+            analyses.append(analysis)
 
         analysis = DirectoryAnalysis(
             directory=directory_path,
@@ -347,7 +513,8 @@ async def async_main():
     """Example usage"""
     analyzer = SimpleCodeAnalyzer(
         file_types="python and configuration files",
-        analysis_prompt=ANALYSIS_PROMPT,  # Use global analysis prompt
+        template_name="requirements",  # Use the requirements template
+        template_path="custom_templates.yaml"  # Optional: path to custom templates
     )
 
     try:
