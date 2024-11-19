@@ -10,6 +10,7 @@ from codebase_analyzer import (SimpleCodeAnalyzer, DirectoryAnalysis,
 from prompt_templates import PromptTemplates
 import asyncio
 import sys
+import yaml
 
 class TemplateEditDialog(QDialog):
     def __init__(self, template_name: str, template_text: str, parent=None):
@@ -78,11 +79,18 @@ class AnalyzerThread(QThread):
 class CodeAnalyzerGUI(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.config = self.load_config()
         self.setWindowTitle("Code Analyzer")
         self.setMinimumSize(800, 600)
         self.analyzer_thread = None
         self.templates = PromptTemplates()  # Add this line to store templates
         self.setup_ui()
+
+    def load_config(self) -> dict:
+        """Load configuration from YAML file"""
+        config_path = Path(__file__).parent / "config.yaml"
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
 
     def setup_ui(self):
         central_widget = QWidget()
@@ -115,6 +123,23 @@ class CodeAnalyzerGUI(QMainWindow):
         output_file_layout.addWidget(QLabel("Output Filename:"))
         output_file_layout.addWidget(self.output_file_input)
         layout.addLayout(output_file_layout)
+
+        # Add separate final analysis output configuration
+        final_output_layout = QHBoxLayout()
+        self.final_output_dir_input = QLineEdit()
+        self.final_output_file_input = QLineEdit("final_analysis.md")
+        final_output_dir_button = QPushButton("Select Final Analysis Output Directory")
+        final_output_dir_button.clicked.connect(self.select_final_output_directory)
+        
+        final_output_layout.addWidget(QLabel("Final Analysis Output:"))
+        final_output_layout.addWidget(self.final_output_dir_input)
+        final_output_layout.addWidget(final_output_dir_button)
+        layout.addLayout(final_output_layout)
+        
+        final_output_file_layout = QHBoxLayout()
+        final_output_file_layout.addWidget(QLabel("Final Analysis Filename:"))
+        final_output_file_layout.addWidget(self.final_output_file_input)
+        layout.addLayout(final_output_file_layout)
 
         # File types input
         file_layout = QHBoxLayout()
@@ -180,10 +205,23 @@ class CodeAnalyzerGUI(QMainWindow):
         self.progress_bar.hide()
         layout.addWidget(self.progress_bar)
 
-        # Results view
+        # Split the results area into two text boxes
+        results_splitter = QVBoxLayout()
+        
+        # Main results view
         self.results_text = QTextEdit()
         self.results_text.setReadOnly(True)
-        layout.addWidget(self.results_text)
+        results_splitter.addWidget(QLabel("File Analysis Results:"))
+        results_splitter.addWidget(self.results_text)
+
+        # Final analysis view
+        self.final_analysis_text = QTextEdit()
+        self.final_analysis_text.setReadOnly(True)
+        final_label = QLabel("Final Codebase Analysis:")
+        results_splitter.addWidget(final_label)
+        results_splitter.addWidget(self.final_analysis_text)
+
+        layout.addLayout(results_splitter)
 
         # Control buttons
         button_layout = QHBoxLayout()
@@ -195,6 +233,14 @@ class CodeAnalyzerGUI(QMainWindow):
         button_layout.addWidget(self.start_button)
         button_layout.addWidget(self.stop_button)
         layout.addLayout(button_layout)
+
+        # Use config values for defaults
+        self.output_dir_input.setText(str(Path(self.config['paths']['output_file']).parent))
+        self.output_file_input.setText(Path(self.config['paths']['output_file']).name)
+        self.dir_input.setText(self.config['paths']['project_dir'])
+        
+        # Set final analysis checkbox based on config
+        self.final_analysis_checkbox.setChecked(self.config['analysis']['perform_final_analysis'])
 
     def toggle_final_analysis_template(self, enabled):
         """Show/hide final analysis template controls"""
@@ -337,6 +383,12 @@ class CodeAnalyzerGUI(QMainWindow):
         if directory:
             self.output_dir_input.setText(directory)
 
+    def select_final_output_directory(self):
+        """Select output directory for final analysis"""
+        directory = QFileDialog.getExistingDirectory(self, "Select Final Analysis Output Directory")
+        if directory:
+            self.final_output_dir_input.setText(directory)
+
     def start_analysis(self):
         if not self.dir_input.text():
             self.results_text.setText("Please select a directory first.")
@@ -344,6 +396,10 @@ class CodeAnalyzerGUI(QMainWindow):
             
         if not self.output_dir_input.text():
             self.results_text.setText("Please select an output directory first.")
+            return
+            
+        if self.final_analysis_checkbox.isChecked() and not self.final_output_dir_input.text():
+            self.results_text.setText("Please select a final analysis output directory.")
             return
 
         # Create output file path
@@ -384,19 +440,37 @@ class CodeAnalyzerGUI(QMainWindow):
 
     def handle_analysis_complete(self, analysis: DirectoryAnalysis):
         self.results_text.clear()
+        self.final_analysis_text.clear()
+        
         self.results_text.append(f"Analysis Results:\n")
         self.results_text.append(f"Directory: {analysis.directory}")
         self.results_text.append(f"Files analyzed: {analysis.file_count}\n")
         
-        # Save analysis to file
+        # Extract final analysis before saving file analyses
+        final_analysis = next((r for r in analysis.results if r.path == "FINAL_ANALYSIS"), None)
+        if final_analysis:
+            analysis.results.remove(final_analysis)  # Remove from main results
+            # Display final analysis in the dedicated text box
+            self.final_analysis_text.setText(final_analysis.analysis)
+        
+        # Save file analyses to main output
         output_file = Path(self.output_dir_input.text()) / self.output_file_input.text()
         save_analysis_to_file(analysis, str(output_file))
         self.results_text.append(f"\nResults saved to: {output_file}\n\n")
         
+        # Show file analyses in main window
         for result in analysis.results:
             self.results_text.append(f"\n--- {result.path} ---\n")
             self.results_text.append(result.analysis)
             self.results_text.append("\n" + "-"*50 + "\n")
+
+        # Handle final analysis file saving if directory specified
+        if final_analysis and self.final_output_dir_input.text():
+            final_output = Path(self.final_output_dir_input.text()) / self.final_output_file_input.text()
+            with open(final_output, 'w', encoding='utf-8') as f:
+                f.write("# Final Codebase Analysis\n\n")
+                f.write(final_analysis.analysis)
+            self.results_text.append(f"\nFinal analysis saved to: {final_output}\n")
 
         self.reset_ui()
 

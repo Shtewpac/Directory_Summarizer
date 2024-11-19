@@ -13,69 +13,38 @@ import os
 from prompt_templates import PromptTemplates
 from math import ceil
 import tiktoken
+import yaml
 
-# Global Configuration
-OPENAI_MODEL = "gpt-4o-mini"  # Change this to use a different model
-PROJECT_DIR = r"C:\Users\wkraf\Documents\Coding\Event_Trader\versions\v7_concurrent_batches"  # Change this to your project directory
-OUTPUT_FILE = r"C:\Users\wkraf\Documents\Coding\Directory_Summarizer\Versions\V3-simple\Sample_Outputs\code_analysis_report.md"  # Change this to your desired output file
+# Load configuration from YAML file
+def load_config(config_path: str = "config.yaml") -> dict:
+    config_path = os.path.join(os.path.dirname(__file__), config_path)
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
 
-# Safety margin for tokens (leaving room for response)
-TOKEN_SAFETY_MARGIN = 0.75  # Use 75% of max tokens for input
+# Load configuration at module level
+CONFIG = load_config()
 
-# Add these after the existing global configurations
-PERFORM_FINAL_ANALYSIS = True  # Enable/disable final GPT analysis
-MAX_TOKENS_PER_CHUNK = 2000  # Adjust based on your needs
-TOKEN_ESTIMATE_RATIO = 4  # Rough estimate of characters per token
+# Replace global variables with config values
+OPENAI_MODEL = CONFIG['model']['name']
+MODEL_CONFIGS = CONFIG['model']['configs']
+TOKEN_SAFETY_MARGIN = CONFIG['analysis']['token_safety_margin']
+PERFORM_FINAL_ANALYSIS = CONFIG['analysis']['perform_final_analysis']
+MAX_TOKENS_PER_CHUNK = CONFIG['analysis']['max_tokens_per_chunk']
+TOKEN_ESTIMATE_RATIO = CONFIG['analysis']['token_estimate_ratio']
+DEFAULT_CONTEXT_WINDOW = CONFIG['analysis']['default_context_window']
+DEFAULT_MAX_OUTPUT = CONFIG['analysis']['default_max_output']
 
-# Configure logging with colors
+# Configure logging with colors from config
 handler = colorlog.StreamHandler()
 handler.setFormatter(colorlog.ColoredFormatter(
     '%(log_color)s%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    log_colors={
-        'DEBUG': 'cyan',
-        'INFO': 'green',
-        'WARNING': 'yellow',
-        'ERROR': 'red',
-        'CRITICAL': 'red,bg_white',
-    }
+    log_colors=CONFIG['logging']['colors']
 ))
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)  # Set default logging level to INFO
+logger.setLevel(getattr(logging, CONFIG['logging']['level']))
 logger.handlers = []  # Remove any existing handlers
 logger.addHandler(handler)
-
-# Model Configuration
-MODEL_CONFIGS = {
-    "gpt-4o": {
-        "context_window": 128000,
-        "max_output_tokens": 16384
-    },
-    "gpt-4o-2024-08-06": {
-        "context_window": 128000,
-        "max_output_tokens": 16384
-    },
-    "gpt-4o-2024-05-13": {
-        "context_window": 128000,
-        "max_output_tokens": 4096
-    },
-    "chatgpt-4o-latest": {
-        "context_window": 128000,
-        "max_output_tokens": 16384
-    },
-    "gpt-4o-mini": {
-        "context_window": 128000,
-        "max_output_tokens": 16384
-    },
-    "gpt-4o-mini-2024-07-18": {
-        "context_window": 128000,
-        "max_output_tokens": 16384
-    }
-}
-
-# Default fallback configuration
-DEFAULT_CONTEXT_WINDOW = 4096
-DEFAULT_MAX_OUTPUT = 1024
 
 class FileExtensions(BaseModel):
     extensions: List[str]
@@ -400,10 +369,17 @@ class SimpleCodeAnalyzer:
             raise ValueError(f"Directory not found: {directory_path}")
 
         matching_files = []
-        for ext in self.file_extensions.extensions:
-            matching_files.extend(dir_path.rglob(f"*{ext}"))
+        logger.info(f"Scanning directory: {dir_path}")
         
-        return sorted(set(matching_files))  # Remove duplicates and sort
+        for ext in self.file_extensions.extensions:
+            logger.info(f"Searching for *{ext} files...")
+            found = list(dir_path.rglob(f"*{ext}"))
+            logger.info(f"Found {len(found)} files with extension {ext}")
+            matching_files.extend(found)
+        
+        unique_files = sorted(set(matching_files))
+        logger.info(f"Total unique files found: {len(unique_files)}")
+        return unique_files
 
     async def generate_final_analysis(self, analysis: DirectoryAnalysis) -> str:
         """Generate a final analysis of all combined results"""
@@ -454,16 +430,28 @@ class SimpleCodeAnalyzer:
 
         logger.info(f"Found {len(files)} files to analyze")
         file_contents = []
-        for f in files:
-            content = await self.read_file_content_async(f)
-            if content:
-                file_contents.append(content)
+        logger.info("Reading file contents...")
+        
+        # Read all files concurrently
+        read_tasks = [self.read_file_content_async(f) for f in files]
+        file_contents = [fc for fc in await asyncio.gather(*read_tasks) if fc]
 
-        analyses = []
-        for fc in file_contents:
-            analysis = await self.analyze_file_content_async(fc)
-            analyses.append(analysis)
+        # Create a semaphore to limit concurrent analyses
+        semaphore = asyncio.Semaphore(self.max_concurrent)
 
+        async def analyze_with_semaphore(file_content):
+            async with semaphore:
+                logger.info(f"Analyzing file: {Path(file_content.path).name}")
+                analysis = await self.analyze_file_content_async(file_content)
+                logger.info(f"Completed analysis of {Path(file_content.path).name}")
+                return analysis
+
+        # Analyze files concurrently with semaphore control
+        logger.info("Beginning file analysis...")
+        analysis_tasks = [analyze_with_semaphore(fc) for fc in file_contents]
+        analyses = await asyncio.gather(*analysis_tasks)
+
+        logger.info("Creating directory analysis summary...")
         analysis = DirectoryAnalysis(
             directory=directory_path,
             file_count=len(analyses),
@@ -473,13 +461,15 @@ class SimpleCodeAnalyzer:
         )
         
         if self.perform_final_analysis:
+            logger.info("Starting final codebase analysis...")
             final_analysis = await self.generate_final_analysis(analysis)
-            # Add final analysis as a special result
+            logger.info("Final analysis complete")
             analysis.results.append(AnalysisResult(
                 path="FINAL_ANALYSIS",
                 analysis=final_analysis
             ))
         
+        logger.info("Analysis complete!")
         return analysis
 
     def analyze_directory(self, directory_path: str) -> DirectoryAnalysis:

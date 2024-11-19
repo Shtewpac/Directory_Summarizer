@@ -1,0 +1,47 @@
+
+# Model Configuration
+model:
+  name: "gpt-4o-mini"
+  configs:
+    gpt-4o:
+      context_window: 128000
+      max_output_tokens: 16384
+    gpt-4o-2024-08-06:
+      context_window: 128000
+      max_output_tokens: 16384
+    gpt-4o-2024-05-13:
+      context_window: 128000
+      max_output_tokens: 4096
+    chatgpt-4o-latest:
+      context_window: 128000
+      max_output_tokens: 16384
+    gpt-4o-mini:
+      context_window: 128000
+      max_output_tokens: 16384
+    gpt-4o-mini-2024-07-18:
+      context_window: 128000
+      max_output_tokens: 16384
+
+# Analysis Configuration
+analysis:
+  token_safety_margin: 0.75
+  perform_final_analysis: true
+  max_tokens_per_chunk: 2000
+  token_estimate_ratio: 4
+  default_context_window: 4096
+  default_max_output: 1024
+
+# Default paths
+paths:
+  project_dir: "C:/Users/wkraf/Documents/Coding/Event_Trader/versions/v7_concurrent_batches"
+  output_file: "C:/Users/wkraf/Documents/Coding/Directory_Summarizer/Versions/V3-simple/Sample_Outputs/code_analysis_report.md"
+
+# Logging Configuration
+logging:
+  level: "DEBUG"
+  colors:
+    debug: "cyan"
+    info: "green"
+    warning: "yellow"
+    error: "red"
+    critical: "red,bg_white"
