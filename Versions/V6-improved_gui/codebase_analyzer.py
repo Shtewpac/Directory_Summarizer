@@ -831,34 +831,3 @@ def save_analysis_to_file(analysis: DirectoryAnalysis, output_path: str):
         if final_analysis:
             f.write("# Final Codebase Analysis\n\n")
             f.write(final_analysis.analysis)
-
-async def async_main():
-    """Example usage"""
-    analyzer = SimpleCodeAnalyzer(
-        file_types="python and configuration files",
-        template_name="requirements",  # Use the requirements template
-        template_path="custom_templates.yaml",  # Optional: path to custom templates
-        analyze_images=True
-    )
-
-    try:
-        analysis = await analyzer.analyze_directory_async(PROJECT_DIR)  # Use global project directory
-        
-        # Save results to file using global output file path
-        save_analysis_to_file(analysis, OUTPUT_FILE)
-        
-        # Print summary to console
-        print(f"\nAnalysis completed at {analysis.timestamp}")
-        print(f"Analyzed {analysis.file_count} files in {analysis.directory}")
-        print(f"File types analyzed: {', '.join(analysis.file_types)}")
-        print(f"\nResults saved to {OUTPUT_FILE}")
-
-    except Exception as e:
-        logger.error("Error during analysis", exc_info=True)
-
-def main():
-    """Entry point"""
-    asyncio.run(async_main())
-
-if __name__ == "__main__":
-    main()
