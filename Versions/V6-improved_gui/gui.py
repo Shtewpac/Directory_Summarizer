@@ -254,9 +254,17 @@ class CodeAnalyzerGUI(QMainWindow):
         input_layout.addWidget(QLabel("File Types:"), 4, 0)
         input_layout.addWidget(self.file_types_input, 4, 1)
 
-        # Add image analysis option
+        # Add image analysis option with supported formats
         self.analyze_images_checkbox = QCheckBox("Analyze Images")
-        self.analyze_images_checkbox.setToolTip("Include image files in the analysis")
+        self.analyze_images_checkbox.setToolTip(
+            "Include image analysis for formats:\n"
+            "- PNG\n"
+            "- JPEG/JPG\n"
+            "- GIF\n"
+            "- BMP\n"
+            "- SVG\n"
+            "- WEBP"
+        )
         input_layout.addWidget(QLabel("Options:"), 5, 0)
         input_layout.addWidget(self.analyze_images_checkbox, 5, 1)
 

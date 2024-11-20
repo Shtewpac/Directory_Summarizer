@@ -13,6 +13,7 @@ import os
 from prompt_templates import PromptTemplates
 import tiktoken
 import yaml
+import base64
 
 # Load configuration from YAML file
 def load_config(config_path: str = "config.yaml") -> dict:
@@ -303,8 +304,57 @@ class SimpleCodeAnalyzer:
         logger.error(f"Failed to read file: {file_path}")
         return None
 
+    async def analyze_image_content(self, file_path: Path) -> str:
+        """Analyze image content using GPT-4 Vision API"""
+        try:
+            # Encode image to base64
+            with open(file_path, "rb") as image_file:
+                base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+
+            async with self.rate_limiter:
+                loop = asyncio.get_event_loop()
+                completion = await loop.run_in_executor(
+                    self.executor,
+                    lambda: self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "Analyze this image and provide:\n1. Description of the content\n2. Key visual elements\n3. Technical details (dimensions, format, etc)\n4. Any text or recognizable symbols\n5. Overall assessment of image quality and purpose",
+                                    },
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:image/jpeg;base64,{base64_image}"
+                                        },
+                                    },
+                                ],
+                            }
+                        ],
+                    )
+                )
+                return completion.choices[0].message.content
+
+        except Exception as e:
+            logger.error(f"Error analyzing image {file_path}: {str(e)}")
+            return f"Error analyzing image: {str(e)}"
+
     async def analyze_file_content_async(self, file_content: FileContent) -> AnalysisResult:
-        """Analyze file content using GPT, splitting into chunks if needed"""
+        """Analyze file content, handling both text and images"""
+        file_path = Path(file_content.path)
+        
+        # Check if file is an image
+        if self.analyze_images and file_path.suffix.lower() in self.image_extensions:
+            analysis = await self.analyze_image_content(file_path)
+            return AnalysisResult(
+                path=file_content.path,
+                analysis=f"## Image Analysis\n\n{analysis}"
+            )
+            
+        # Regular file analysis continues as before
         content_chunks = self.split_content_into_chunks(file_content.content)
         
         if len(content_chunks) == 1:
@@ -726,8 +776,8 @@ class SimpleCodeAnalyzer:
             "Python and configuration files" or "JavaScript, TypeScript, and web assets"
             """
 
-            if self.analyze_images:
-                prompt += "\nInclude image files in your analysis."
+            if not self.analyze_images:
+                prompt += "\nExclude image files from the analysis."
 
             # Log the full prompt being sent to GPT
             logger.debug("Sending prompt to GPT:\n%s", prompt)
