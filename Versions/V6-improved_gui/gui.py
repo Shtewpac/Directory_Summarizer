@@ -161,6 +161,15 @@ class MarkdownTextEdit(QTextBrowser):
 class CodeAnalyzerGUI(QMainWindow):
     def __init__(self):
         super().__init__()
+        # Set window icon - before any other initialization
+        icon_path = str(Path(__file__).parent / "assets" / "code_analyzer.png")
+        self.setWindowIcon(QIcon(icon_path))
+        # Also set the taskbar icon for Windows
+        if sys.platform == 'win32':
+            import ctypes
+            myappid = 'codeanalyzer.v6'  # arbitrary string
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        
         self.config = self.load_config()
         self.ensure_output_directory()
         self.setWindowTitle("Code Analyzer")
