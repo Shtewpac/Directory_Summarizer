@@ -1,0 +1,14 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: GUI",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${fileDirname}/gui.py",
+            "console": "integratedTerminal",
+            "cwd": "${fileDirname}",
+            "justMyCode": true
+        }
+    ]
+}
