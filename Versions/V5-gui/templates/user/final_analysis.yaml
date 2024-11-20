@@ -1,0 +1,7 @@
+final_analysis:
+  author: System
+  content: Provide a comprehensive analysis
+  description: Overall directory summary and insights
+  extends: null
+  variables: {}
+  version: '1.0'

@@ -1,0 +1,12 @@
+unused_code:
+  author: System
+  content: "Analyze the file for unused and dead code:\n                    1. List\
+    \ any imports that are not used in the code\n                    2. Identify functions\
+    \ or methods that are never called\n                    3. Find classes that are\
+    \ defined but not instantiated\n                    4. Locate commented out code\
+    \ blocks that should be removed\n                    5. Detect unreachable code\
+    \ blocks\n                    6. Identify redundant or duplicate functionality"
+  description: Detect unused and dead code
+  extends: null
+  variables: {}
+  version: '1.0'

@@ -18,9 +18,9 @@ class TemplateManager:
     def __init__(self, template_dir: str = "templates"):
         # Always resolve template_dir relative to the current file's location
         self.template_dir = Path(__file__).parent / template_dir
-        self.user_template_dir = self.template_dir / "user"  # Changed: Now a subdirectory of templates
+        self.user_template_dir = self.template_dir / "user"
         self.templates: Dict[str, Template] = {}
-        self.final_templates: Dict[str, Template] = {}  # Add separate dict for final templates
+        self.final_templates: Dict[str, Template] = {}
         self.ensure_directories()
         self.load_default_templates()  # First load built-in defaults
         self.load_all_templates()      # Then load from files
@@ -33,82 +33,58 @@ class TemplateManager:
         (self.user_template_dir / ".gitkeep").touch(exist_ok=True)
 
     def load_default_templates(self):
-        """Load built-in default templates"""
-        defaults = {
-            'analysis': {
-                'version': '1.0',
-                'author': 'System',
-                'description': 'General file analysis and structure',
-                'content': """
-                    For the provided file:
-                    1. File type and format overview
-                    2. Key content summary
-                    3. Structure and organization
-                    4. Notable patterns or elements
-                    5. Potential concerns or improvements
-                """
+        """Load built-in default templates from files"""
+        system_templates_dir = self.template_dir / "system"
+        system_templates_dir.mkdir(exist_ok=True)
+
+        # Ensure default template files exist
+        self.ensure_default_template_files(system_templates_dir)
+
+        # Load templates from system directory
+        if system_templates_dir.exists():
+            for yaml_file in system_templates_dir.glob("*.yaml"):
+                self.load_template_file(yaml_file)
+
+    def ensure_default_template_files(self, system_dir: Path):
+        """Create default template files if they don't exist"""
+        default_templates = {
+            'analysis.yaml': {
+                'analysis': {
+                    'version': '1.0',
+                    'author': 'System',
+                    'description': 'General file analysis and structure',
+                    'content': """
+                        For the provided file:
+                        1. File type and format overview
+                        2. Key content summary
+                        3. Structure and organization
+                        4. Notable patterns or elements
+                        5. Potential concerns or improvements
+                    """
+                }
             },
-            'unused_code': {
-                'version': '1.0',
-                'author': 'System',
-                'description': 'Detect unused and dead code',
-                'content': """
-                    Analyze the file for unused and dead code:
-                    1. List any imports that are not used in the code
-                    2. Identify functions or methods that are never called
-                    3. Find classes that are defined but not instantiated
-                    4. Locate commented out code blocks that should be removed
-                    5. Detect unreachable code blocks
-                    6. Identify redundant or duplicate functionality
-                    
-                    For each issue found, provide:
-                    - Exact location (line numbers if visible)
-                    - Why you believe it's unused/dead code
-                    - Suggested action (remove/refactor)
-                    - Potential risks of removal
-                """
-            }
-        }
-        
-        final_defaults = {
-            'final_analysis': {
-                'version': '1.0',
-                'author': 'System',
-                'description': 'Overall directory summary and insights',
-                'content': """
-                    Provide a comprehensive directory analysis:
-                    1. Overview of files and their purposes
-                    2. Common patterns across files
-                    3. Key observations and findings
-                    4. Organization assessment
-                    5. Improvement suggestions
-                """
+            'final_analysis.yaml': {
+                'final_analysis': {
+                    'version': '1.0',
+                    'author': 'System',
+                    'description': 'Overall directory summary and insights',
+                    'content': """
+                        Provide a comprehensive directory analysis:
+                        1. Overview of files and their purposes
+                        2. Common patterns across files
+                        3. Key observations and findings
+                        4. Organization assessment
+                        5. Improvement suggestions
+                    """
+                }
             }
         }
 
-        # Load regular templates
-        for name, data in defaults.items():
-            self.templates[name] = Template(
-                name=name,
-                version=data['version'],
-                author=data['author'],
-                description=data['description'],
-                content=data['content'].strip(),
-                extends=None,
-                variables={}
-            )
-
-        # Load final analysis templates
-        for name, data in final_defaults.items():
-            self.final_templates[name] = Template(
-                name=name,
-                version=data['version'],
-                author=data['author'],
-                description=data['description'],
-                content=data['content'].strip(),
-                extends=None,
-                variables={}
-            )
+        for filename, content in default_templates.items():
+            template_file = system_dir / filename
+            if not template_file.exists():
+                with open(template_file, 'w') as f:
+                    yaml.dump(content, f)
 
     def load_all_templates(self):
         """Load both system and user templates"""
@@ -116,7 +92,7 @@ class TemplateManager:
         if self.template_dir.exists():
             for yaml_file in self.template_dir.glob("*.yaml"):
                 self.load_template_file(yaml_file)
-        
+
         # Load user templates
         if self.user_template_dir.exists():
             for yaml_file in self.user_template_dir.glob("*.yaml"):
@@ -149,7 +125,7 @@ class TemplateManager:
         """Save a template to the appropriate directory"""
         save_dir = self.user_template_dir if is_user_template else self.template_dir
         file_path = save_dir / f"{name}.yaml"
-        
+
         template_data = {
             name: {
                 'version': template.version,
@@ -160,7 +136,7 @@ class TemplateManager:
                 'variables': template.variables
             }
         }
-        
+
         with open(file_path, 'w') as f:
             yaml.dump(template_data, f)
         logging.info(f"Saved template {name} to {file_path}")
@@ -218,8 +194,8 @@ class TemplateManager:
             for name, template in self.final_templates.items()
         }
 
-    def add_template(self, name: str, content: str, description: str, 
-                    extends: Optional[str] = None, variables: Dict[str, str] = None):
+    def add_template(self, name: str, content: str, description: str,
+                     extends: Optional[str] = None, variables: Dict[str, str] = None):
         """Add a new template and save it"""
         template = Template(
             name=name,
@@ -259,7 +235,7 @@ class TemplateManager:
 class PromptTemplates:
     def __init__(self, template_path: Optional[str] = None):
         self.manager = TemplateManager(template_path or "templates")
-        
+
     def get_template(self, template_name: str, is_final: bool = False) -> Optional[str]:
         try:
             return self.manager.get_template(template_name, is_final)

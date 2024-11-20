@@ -1,0 +1,7 @@
+Long Summary:
+  author: User
+  content: Provide a summary of the file. Be as thorough as possible.
+  description: Custom template
+  extends: null
+  variables: {}
+  version: '1.0'

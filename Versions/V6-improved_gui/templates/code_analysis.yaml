@@ -1,0 +1,24 @@
+unused_code_detailed:
+  version: "1.0"
+  author: "System"
+  description: "Comprehensive unused code detection"
+  content: |
+    Perform a detailed analysis of unused and dead code:
+    1. List any imports that are not used in the code
+    2. Identify functions or methods that are never called
+    3. Find classes that are defined but not instantiated
+    4. Locate commented out code blocks that should be removed
+    5. Detect unreachable code blocks
+    6. Identify redundant or duplicate functionality
+
+    Additional checks:
+    - Look for deprecated API usage
+    - Check for outdated dependencies
+    - Identify unused configuration settings
+    - Find unused environment variables
+    - Detect unused database fields/tables
+      
+    Risk assessment:
+    - Dependencies on the unused code
+    - Impact on test coverage
+    - Backwards compatibility concerns

@@ -1,0 +1,9 @@
+final_analysis:
+  author: System
+  content: "\n                        Provide a comprehensive directory analysis:\n\
+    \                        1. Overview of files and their purposes\n           \
+    \             2. Common patterns across files\n                        3. Key\
+    \ observations and findings\n                        4. Organization assessment\n\
+    \                        5. Improvement suggestions\n                    "
+  description: Overall directory summary and insights
+  version: '1.0'

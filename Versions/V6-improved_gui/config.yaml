@@ -20,7 +20,7 @@ analysis:
 
 # Default paths
 paths:
-  project_dir: "C:/Users/wkraf/Documents/Coding/Event_Trader/versions/v7_concurrent_batches"
+  project_dir: "./Sample_Directories"  # Change this line
   output_dir: "./Sample_Outputs"  # Add this line
   output_file: "./Sample_Outputs/code_analysis_report.md"
 

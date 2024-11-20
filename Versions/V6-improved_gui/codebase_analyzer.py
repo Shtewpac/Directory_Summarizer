@@ -37,11 +37,28 @@ DEFAULT_MAX_OUTPUT = CONFIG['analysis']['default_max_output']
 handler = colorlog.StreamHandler()
 handler.setFormatter(colorlog.ColoredFormatter(
     '%(log_color)s%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    log_colors=CONFIG['logging']['colors']
+    log_colors={
+        'DEBUG': 'cyan',
+        'INFO': 'green',
+        'WARNING': 'yellow',
+        'ERROR': 'red',
+        'CRITICAL': 'red,bg_white',
+        'TRACE': 'blue'  # For our custom TRACE level
+    },
+    secondary_log_colors={},
+    style='%'
 ))
 
+# Add TRACE level for extra detailed logging
+TRACE_LEVEL = 5  # Lower than DEBUG (10)
+logging.addLevelName(TRACE_LEVEL, 'TRACE')
+def trace(self, message, *args, **kwargs):
+    if self.isEnabledFor(TRACE_LEVEL):
+        self._log(TRACE_LEVEL, message, args, **kwargs)
+logging.Logger.trace = trace
+
 logger = logging.getLogger(__name__)
-logger.setLevel(getattr(logging, CONFIG['logging']['level']))
+logger.setLevel(logging.DEBUG)  # Set to DEBUG to show all levels
 logger.handlers = []  # Remove any existing handlers
 logger.addHandler(handler)
 
@@ -153,7 +170,7 @@ class RateLimiter:
 class SimpleCodeAnalyzer:
     def __init__(
         self,
-        file_types: str,
+        file_types: Optional[str] = None,
         template_name: str = 'analysis',
         template_path: Optional[str] = None,
         api_key: Optional[str] = None,
@@ -161,13 +178,22 @@ class SimpleCodeAnalyzer:
         model: str = OPENAI_MODEL,
         final_analysis_model: Optional[str] = None,
         perform_final_analysis: bool = PERFORM_FINAL_ANALYSIS,
-        progress_callback: Optional[Callable[[str], None]] = None
+        progress_callback: Optional[Callable[[str], None]] = None,
+        file_types_callback: Optional[Callable[[str], None]] = None,  # Add new callback
+        analyze_images: bool = False
     ):
         self.client = OpenAI(api_key=api_key or os.getenv('OPENAI_API_KEY'))
         self.model = model
-        self.file_extensions = FileExtensions.from_string(file_types, client=self.client, model=self.model)
         self.templates = PromptTemplates(template_path)
         self.template_name = template_name
+        
+        # Get template content for file type suggestion if needed
+        template_content = self.templates.get_template(template_name)
+        
+        # Initialize file extensions later
+        self.file_extensions = None
+        self._file_types = file_types
+
         self.final_template_name = 'final_analysis'
         self.analysis_prompt = self.templates.get_template(template_name) if self.templates.manager.template_exists(template_name) else None
         self.final_analysis_prompt = self.templates.get_template('final_analysis') if self.templates.manager.template_exists('final_analysis') else None
@@ -177,6 +203,9 @@ class SimpleCodeAnalyzer:
         self.perform_final_analysis = perform_final_analysis
         self.final_analysis_model = final_analysis_model or model
         self.progress_callback = progress_callback
+        self.file_types_callback = file_types_callback
+        self.analyze_images = analyze_images
+        self.image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp'}
 
         # Initialize tokenizer and set token limits from configuration
         try:
@@ -210,7 +239,7 @@ class SimpleCodeAnalyzer:
         """Split content into chunks based on model token limit"""
         total_tokens = self.count_tokens(content)
         
-        if total_tokens <= self.max_tokens:
+        if (total_tokens <= self.max_tokens):
             return [content]
 
         # Split into chunks by lines to maintain code structure
@@ -242,6 +271,28 @@ class SimpleCodeAnalyzer:
 
     async def read_file_content_async(self, file_path: Path) -> Optional[FileContent]:
         """Asynchronously read file content with multiple encoding attempts"""
+        # Skip reading image files, just return metadata
+        if self.analyze_images and Path(file_path).suffix.lower() in self.image_extensions:
+            try:
+                from PIL import Image
+                img = Image.open(file_path)
+                metadata = {
+                    'format': img.format,
+                    'mode': img.mode,
+                    'size': img.size,
+                }
+                return FileContent(
+                    path=str(file_path),
+                    content=f"[Image File]\nFormat: {metadata['format']}\nMode: {metadata['mode']}\nSize: {metadata['size'][0]}x{metadata['size'][1]}"
+                )
+            except Exception as e:
+                logger.warning(f"Could not read image metadata for {file_path}: {e}")
+                return FileContent(
+                    path=str(file_path),
+                    content=f"[Image File]\nType: {Path(file_path).suffix}"
+                )
+
+        # Regular file handling
         for encoding in ['utf-8', 'latin-1', 'cp1252']:
             try:
                 async with aiofiles.open(file_path, 'r', encoding=encoding) as f:
@@ -316,8 +367,8 @@ class SimpleCodeAnalyzer:
                 {content}
                 """
                 
-                # Log the system prompt for debugging
-                logger.debug(f"Using system prompt for {Path(file_path).name}:\n{system_prompt}")
+                # Only log system prompt at trace level to avoid spam
+                logger.trace(f"Using system prompt for {Path(file_path).name}:\n{system_prompt}")
                 
                 total_tokens = self.count_tokens(system_prompt + user_prompt)
                 if total_tokens > self.max_tokens:
@@ -395,6 +446,13 @@ class SimpleCodeAnalyzer:
             logger.info(f"Found {len(found)} files with extension {ext}")
             matching_files.extend(found)
         
+        # Add common image extensions if enabled
+        if self.analyze_images:
+            for ext in self.image_extensions:
+                found = list(dir_path.rglob(f"*{ext}"))
+                logger.info(f"Found {len(found)} image files with extension {ext}")
+                matching_files.extend(found)
+
         unique_files = sorted(set(matching_files))
         logger.info(f"Total unique files found: {len(unique_files)}")
         return unique_files
@@ -520,6 +578,25 @@ class SimpleCodeAnalyzer:
     async def analyze_directory_async(self, directory_path: str) -> DirectoryAnalysis:
         """Analyze all matching files in the directory"""
         self.update_progress("Starting directory analysis...")
+        
+        # If no file types specified, get suggestion first
+        if not self._file_types:
+            self.update_progress("Analyzing directory to determine relevant file types...")
+            template_content = self.templates.get_template(self.template_name)
+            suggested_types = await self.suggest_file_types(directory_path, template_content)
+            self._file_types = suggested_types
+            if self.file_types_callback:  # Notify GUI of detected types
+                self.file_types_callback(suggested_types)
+            self.update_progress(f"Suggested file types: {suggested_types}")
+
+        # Initialize file extensions if not already done
+        if not self.file_extensions:
+            self.file_extensions = FileExtensions.from_string(
+                self._file_types, 
+                client=self.client, 
+                model=self.model
+            )
+
         logger.info(f"Beginning analysis of directory: {directory_path}")
         logger.info(f"Looking for files with extensions: {self.file_extensions.extensions}")
         
@@ -592,6 +669,92 @@ class SimpleCodeAnalyzer:
         logger.info("Analysis complete!")
         return analysis
 
+    async def suggest_file_types(self, directory: str, template_content: str) -> str:
+        try:
+            # Get list of all files in directory, excluding common development folders
+            dir_path = Path(directory)
+            ignored_folders = {
+                '.git',          # Git repository
+                'node_modules',  # NPM packages
+                'venv',          # Python virtual environment
+                '.env',          # Python virtual environment (alternate name)
+                '__pycache__',   # Python cache
+                'dist',          # Distribution/build files
+                'build',         # Build output
+                '.idea',         # IntelliJ/PyCharm
+                '.vscode',       # VS Code
+                'vendor',        # Dependencies in some languages
+                'bin',           # Binary files
+                'obj'           # Object files
+            }
+
+            all_files = []
+            for path in dir_path.rglob("*"):
+                # Skip ignored directories and their contents
+                if any(ignored in path.parts for ignored in ignored_folders):
+                    continue
+                if path.is_file() and not path.name.startswith('.'):
+                    all_files.append(path)
+            
+            # Create file list summary
+            file_summary = "\n".join([
+                f"- {p.relative_to(dir_path)}" 
+                for p in sorted(all_files)
+            ])
+
+            # Rest of the method remains the same...
+            logger.info("=== Automatic File Type Detection ===")
+            logger.debug("Directory structure being analyzed:\n%s", file_summary)
+            logger.debug("Using analysis template:\n%s", template_content)
+
+            # Create prompt for GPT
+            prompt = f"""Given this directory structure and analysis template, suggest the most relevant file types to analyze.
+
+            Directory contents:
+            {file_summary}
+
+            Analysis template:
+            {template_content}
+
+            Consider:
+            1. The types of files present in the directory
+            2. The focus of the analysis template
+            3. Which files would provide the most valuable insights
+            4. Common groups of related files
+
+            Return only a natural language description of the file types to analyze, like:
+            "Python and configuration files" or "JavaScript, TypeScript, and web assets"
+            """
+
+            if self.analyze_images:
+                prompt += "\nInclude image files in your analysis."
+
+            # Log the full prompt being sent to GPT
+            logger.debug("Sending prompt to GPT:\n%s", prompt)
+
+            # Get suggestion from GPT
+            async with self.rate_limiter:
+                loop = asyncio.get_event_loop()
+                completion = await loop.run_in_executor(
+                    self.executor,
+                    lambda: self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": "You are an expert code analyzer helping to select the most relevant files for analysis."},
+                            {"role": "user", "content": prompt}
+                        ]
+                    )
+                )
+                
+                suggestion = completion.choices[0].message.content.strip()
+                logger.info("GPT suggested file types: %s", suggestion)
+                return suggestion
+
+        except Exception as e:
+            logger.error("Error suggesting file types: %s", str(e))
+            logger.info("Falling back to default: 'all source code files'")
+            return "all source code files"  # Fallback suggestion
+
     def analyze_directory(self, directory_path: str) -> DirectoryAnalysis:
         """Synchronous wrapper for analyze_directory_async"""
         return asyncio.run(self.analyze_directory_async(directory_path))
@@ -624,7 +787,8 @@ async def async_main():
     analyzer = SimpleCodeAnalyzer(
         file_types="python and configuration files",
         template_name="requirements",  # Use the requirements template
-        template_path="custom_templates.yaml"  # Optional: path to custom templates
+        template_path="custom_templates.yaml",  # Optional: path to custom templates
+        analyze_images=True
     )
 
     try:

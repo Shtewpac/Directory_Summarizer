@@ -1,0 +1,9 @@
+analysis:
+  author: System
+  content: "\n                        For the provided file:\n                   \
+    \     1. File type and format overview\n                        2. Key content\
+    \ summary\n                        3. Structure and organization\n           \
+    \             4. Notable patterns or elements\n                        5. Potential\
+    \ concerns or improvements\n                    "
+  description: General file analysis and structure
+  version: '1.0'

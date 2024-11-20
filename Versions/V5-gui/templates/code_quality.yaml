@@ -1,0 +1,55 @@
+unused_code_analysis:
+  version: "1.0"
+  author: "System"
+  description: "Detect unused and dead code"
+  content: |
+    Analyze the code for unused and dead code:
+    1. List any imports that are not used in the code
+    2. Identify functions or methods that are never called
+    3. Find classes that are defined but not instantiated
+    4. Locate commented out code blocks that should be removed
+    5. Detect unreachable code blocks
+    6. Identify redundant or duplicate functionality
+
+    For each issue found, provide:
+    - Location reference
+    - Usage analysis
+    - Removal recommendation
+  extends: "base_analysis"
+  variables:
+    summary_section: "Overview of potential dead code"
+    structure_section: |
+      Identify:
+      - Unused functions and classes
+      - Dead code blocks
+      - Unreachable code
+      - Unused imports
+    quality_section: |
+      For each issue:
+      - Location reference
+      - Usage analysis
+      - Removal recommendation
+
+performance_analysis:
+  version: "1.0"
+  author: "System"
+  description: "Performance analysis and optimization"
+  content: |
+    Review code for performance optimization:
+    1. Identify performance bottlenecks
+    2. Check for inefficient algorithms
+    3. Review database queries
+    4. Analyze memory usage
+    5. Look for unnecessary computations
+  extends: "base_analysis"
+  variables:
+    summary_section: "Performance bottlenecks overview"
+    structure_section: |
+      Review:
+      - Algorithm efficiency
+      - Resource usage
+      - Query optimization
+    quality_section: |
+      For each issue:
+      - Impact assessment
+      - Optimization suggestions

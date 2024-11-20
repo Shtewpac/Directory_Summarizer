@@ -1,0 +1,3 @@
+
+# ...existing requirements...
+tiktoken>=0.5.1

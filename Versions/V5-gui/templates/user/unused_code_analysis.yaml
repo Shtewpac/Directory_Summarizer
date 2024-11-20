@@ -1,0 +1,40 @@
+unused_code_analysis:
+  author: System
+  content: 'Analyze the code for unused and dead code:
+
+    1. List any imports that are not used in the code
+
+    2. Identify functions or methods that are never called
+
+    3. Find classes that are defined but not instantiated
+
+    4. Locate commented out code blocks that should be removed
+
+    5. Detect unreachable code blocks
+
+    6. Identify redundant or duplicate functionality'
+  description: Detect unused and dead code
+  extends: base_analysis
+  variables:
+    quality_section: 'For each issue:
+
+      - Location reference
+
+      - Usage analysis
+
+      - Removal recommendation
+
+      '
+    structure_section: 'Identify:
+
+      - Unused functions and classes
+
+      - Dead code blocks
+
+      - Unreachable code
+
+      - Unused imports
+
+      '
+    summary_section: Overview of potential dead code
+  version: '1.0'

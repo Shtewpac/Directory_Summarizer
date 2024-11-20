@@ -1,0 +1,21 @@
+
+base_analysis:
+  version: "1.0"
+  author: "System"
+  description: "Base template for code analysis"
+  content: |
+    Analyze the code and provide:
+    1. {{summary_section}}
+    2. {{structure_section}}
+    3. {{quality_section}}
+    4. Additional findings
+
+base_final:
+  version: "1.0"
+  author: "System"
+  description: "Base template for final analysis"
+  content: |
+    Provide a comprehensive analysis:
+    1. {{overview_section}}
+    2. {{patterns_section}}
+    3. {{recommendations_section}}
